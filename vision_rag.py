@@ -8,7 +8,8 @@ import tqdm
 import numpy as np
 import streamlit as st
 import cohere
-from google import genai
+# from google import genai # Commented out as Gemini is replaced by DeepSeek
+import openai # Added for DeepSeek
 import fitz # PyMuPDF
 
 # --- Streamlit App Configuration ---
@@ -19,41 +20,74 @@ st.title("Vision RAG with Cohere Embed-4 🖼️")
 with st.sidebar:
     st.header("🔑 API Keys")
     cohere_api_key = st.text_input("Cohere API Key", type="password", key="cohere_key")
-    google_api_key = st.text_input("Google API Key (Gemini)", type="password", key="google_key")
+    # google_api_key = st.text_input("Google API Key (Gemini)", type="password", key="google_key") # Commented out
+    deepseek_api_key = st.text_input("DeepSeek API Key (for Answering)", type="password", key="deepseek_key") # Clarified purpose
     "[Get a Cohere API key](https://dashboard.cohere.com/api-keys)"
-    "[Get a Google API key](https://aistudio.google.com/app/apikey)"
+    # "[Get a Google API key](https://aistudio.google.com/app/apikey)" # Commented out
+    "[Get a DeepSeek API key](https://platform.deepseek.com/api_keys)"
 
     st.markdown("---")
     if not cohere_api_key:
-        st.warning("Please enter your Cohere API key to proceed.")
-    if not google_api_key:
-        st.warning("Please enter your Google API key to proceed.")
+        st.warning("Please enter your Cohere API key to proceed (used for embeddings).")
+    # if not google_api_key: # Commented out
+    #     st.warning("Please enter your Google API key to proceed.") # Commented out
+    if not deepseek_api_key:
+        st.warning("Please enter your DeepSeek API key to proceed (used for answering).")
     st.markdown("---")
 
 
 # --- Initialize API Clients ---
 co = None
-genai_client = None
+# genai_client = None # Commented out
+deepseek_client = None # Added for DeepSeek
 # Initialize Session State for embeddings and paths
 if 'image_paths' not in st.session_state:
     st.session_state.image_paths = []
 if 'doc_embeddings' not in st.session_state:
     st.session_state.doc_embeddings = None
 
-if cohere_api_key and google_api_key:
+# Initialize Cohere Client
+if cohere_api_key:
     try:
         co = cohere.ClientV2(api_key=cohere_api_key)
         st.sidebar.success("Cohere Client Initialized!")
     except Exception as e:
         st.sidebar.error(f"Cohere Initialization Failed: {e}")
+        co = None # Ensure client is None if init fails
 
+# Commented out Gemini Client Initialization
+# if google_api_key:
+#     try:
+#         genai_client = genai.Client(api_key=google_api_key)
+#         st.sidebar.success("Gemini Client Initialized!")
+#     except Exception as e:
+#         st.sidebar.error(f"Gemini Initialization Failed: {e}")
+#         genai_client = None
+
+# Initialize DeepSeek Client
+if deepseek_api_key:
     try:
-        genai_client = genai.Client(api_key=google_api_key)
-        st.sidebar.success("Gemini Client Initialized!")
+        deepseek_client = openai.OpenAI(
+            api_key=deepseek_api_key,
+            base_url="https://api.deepseek.com"
+        )
+        st.sidebar.success("DeepSeek Client Initialized!")
     except Exception as e:
-        st.sidebar.error(f"Gemini Initialization Failed: {e}")
-else:
-    st.info("Enter your API keys in the sidebar to start.")
+        st.sidebar.error(f"DeepSeek Initialization Failed: {e}")
+        deepseek_client = None # Ensure client is None if init fails
+
+# Updated informational messages
+if not cohere_api_key and not deepseek_api_key:
+    st.info("Enter your Cohere and DeepSeek API keys in the sidebar to start.")
+elif not cohere_api_key:
+    st.info("Cohere API key is required for embedding. Please enter it in the sidebar.")
+elif not deepseek_api_key:
+    st.info("DeepSeek API key is required for answering. Please enter it in the sidebar.")
+elif not co: # Checks if Cohere client initialization failed
+    st.warning("Cohere client not initialized. Check your Cohere API key or console for errors.")
+elif not deepseek_client: # Checks if DeepSeek client initialization failed
+    st.warning("DeepSeek client not initialized. Check your DeepSeek API key or console for errors.")
+
 
 # Information about the models
 with st.expander("ℹ️ About the models used"):
@@ -69,10 +103,10 @@ with st.expander("ℹ️ About the models used"):
     
     The model processes images without requiring complex OCR pre-processing and maintains the connection between visual elements and text.
     
-    ### Google Gemini 2.5 Flash
+    ### DeepSeek Vision Model
     
-    Gemini 2.5 Flash is Google's efficient multimodal model that can process text and image inputs to generate high-quality responses.
-    It's designed for fast inference while maintaining high accuracy, making it ideal for real-time applications like this RAG system.
+    DeepSeek Vision is a powerful large language model capable of understanding and processing both text and image inputs to generate relevant textual responses.
+    It's utilized in this application for the question-answering component based on the retrieved visual context.
     """)
 
 # --- Helper functions ---
@@ -346,33 +380,46 @@ def search(question: str, co_client: cohere.Client, embeddings: np.ndarray, imag
         return None
 
 # Answer function
-def answer(question: str, img_path: str, gemini_client) -> str:
-    """Answers the question based on the provided image using Gemini."""
-    if not gemini_client or not img_path or not os.path.exists(img_path):
-        missing = []
-        if not gemini_client: missing.append("Gemini client")
-        if not img_path: missing.append("Image path")
-        elif not os.path.exists(img_path): missing.append(f"Image file at {img_path}")
-        return f"Answering prerequisites not met ({', '.join(missing)} missing or invalid)."
+def answer(question: str, img_path: str, deepseek_client_instance: openai.OpenAI) -> str:
+    """Answers the question based on the provided image using DeepSeek's vision model."""
+    if not deepseek_client_instance:
+        return "DeepSeek client not initialized. Please check API key and initialization."
+    if not img_path or not os.path.exists(img_path):
+        return f"Image path not provided or image does not exist at {img_path}."
+
     try:
-        img = PIL.Image.open(img_path)
-        prompt = [f"""Answer the question based on the following image. Be as elaborate as possible giving extra relevant information.
-Don't use markdown formatting in the response.
-Please provide enough context for your answer.
+        base64_image = base64_from_image(img_path)
 
-Question: {question}""", img]
-
-        response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash-preview-04-17",
-            contents=prompt
+        prompt_text = (
+            f"Answer the question based on the following image. "
+            f"Be as elaborate as possible giving extra relevant information. "
+            # "Don't use markdown formatting in the response. " # DeepSeek might handle markdown well, let's test without this restriction first
+            f"Please provide enough context for your answer. Question: {question}"
         )
 
-        llm_answer = response.text
-        print("LLM Answer:", llm_answer) # Keep for debugging
+        response = deepseek_client_instance.chat.completions.create(
+            model="deepseek-vision", # Assumed model name, verify if different
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt_text},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": base64_image},
+                        },
+                    ],
+                }
+            ],
+            max_tokens=500  # As requested
+        )
+
+        llm_answer = response.choices[0].message.content
+        print("DeepSeek LLM Answer:", llm_answer) # Keep for debugging
         return llm_answer
     except Exception as e:
-        st.error(f"Error during answer generation: {e}")
-        return f"Failed to generate answer: {e}"
+        st.error(f"Error during DeepSeek answer generation: {e}")
+        return f"Failed to generate answer using DeepSeek: {e}"
 
 # --- Main UI Setup ---
 st.subheader("📊 Load Sample Images")
@@ -509,8 +556,15 @@ question = st.text_input("Ask a question about the loaded images:",
                           placeholder="E.g., What is Nike's net profit?",
                           disabled=not st.session_state.image_paths)
 
-run_button = st.button("Run Vision RAG", key="main_run_button", 
-                      disabled=not (cohere_api_key and google_api_key and question and st.session_state.image_paths and st.session_state.doc_embeddings is not None and st.session_state.doc_embeddings.size > 0))
+run_button = st.button("Run Vision RAG", key="main_run_button",
+                      disabled=not (
+                          cohere_api_key and co and  # Cohere for embeddings
+                          deepseek_api_key and deepseek_client and # DeepSeek for answering
+                          question and
+                          st.session_state.image_paths and
+                          st.session_state.doc_embeddings is not None and
+                          st.session_state.doc_embeddings.size > 0
+                      ))
 
 # Output Area
 st.markdown("### Results")
@@ -519,7 +573,8 @@ answer_placeholder = st.empty()
 
 # Run search and answer logic
 if run_button:
-    if co and genai_client and st.session_state.doc_embeddings is not None and len(st.session_state.doc_embeddings) > 0:
+    # Check for co (Cohere client) and deepseek_client
+    if co and deepseek_client and st.session_state.doc_embeddings is not None and len(st.session_state.doc_embeddings) > 0:
          with st.spinner("Finding relevant image..."):
             # Ensure embeddings and paths match before search
              if len(st.session_state.image_paths) != st.session_state.doc_embeddings.shape[0]:
@@ -539,16 +594,16 @@ if run_button:
 
                     retrieved_image_placeholder.image(top_image_path, caption=caption, use_container_width=True)
 
-                    with st.spinner("Generating answer..."):
-                        final_answer = answer(question, top_image_path, genai_client)
+                    with st.spinner("Generating answer using DeepSeek..."): # Updated spinner
+                        final_answer = answer(question, top_image_path, deepseek_client) # Use deepseek_client
                         answer_placeholder.markdown(f"**Answer:**\n{final_answer}")
                 else:
                     retrieved_image_placeholder.warning("Could not find a relevant image for your question.")
                     answer_placeholder.text("") # Clear answer placeholder
     else:
         # This case should ideally be prevented by the disabled state of the button
-        st.error("Cannot run RAG. Check API clients and ensure images are loaded with embeddings.")
+        st.error("Cannot run RAG. Check API clients (Cohere & DeepSeek) and ensure images are loaded with embeddings.") # Updated error message
 
 # Footer
 st.markdown("---")
-st.caption("Vision RAG with Cohere Embed-4 | Built with Streamlit, Cohere Embed-4, and Google Gemini 2.5 Flash")
+st.caption("Vision RAG with Cohere Embed-4 | Built with Streamlit, Cohere Embed-4, and DeepSeek Vision") # Updated caption

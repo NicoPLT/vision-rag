@@ -21,18 +21,18 @@ with st.sidebar:
     st.header("🔑 API Keys")
     cohere_api_key = st.text_input("Cohere API Key", type="password", key="cohere_key")
     # google_api_key = st.text_input("Google API Key (Gemini)", type="password", key="google_key") # Commented out
-    deepseek_api_key = st.text_input("DeepSeek API Key (for Answering)", type="password", key="deepseek_key") # Clarified purpose
+    together_api_key = st.text_input("Together.AI API Key", type="password", key="together_key") # Renamed variable and label, updated key
     "[Get a Cohere API key](https://dashboard.cohere.com/api-keys)"
     # "[Get a Google API key](https://aistudio.google.com/app/apikey)" # Commented out
-    "[Get a DeepSeek API key](https://platform.deepseek.com/api_keys)"
+    "[Get a Together.AI API key](https://api.together.xyz/settings/api-keys)" # Updated link
 
     st.markdown("---")
     if not cohere_api_key:
         st.warning("Please enter your Cohere API key to proceed (used for embeddings).")
     # if not google_api_key: # Commented out
     #     st.warning("Please enter your Google API key to proceed.") # Commented out
-    if not deepseek_api_key:
-        st.warning("Please enter your DeepSeek API key to proceed (used for answering).")
+    if not together_api_key: # Renamed variable
+        st.warning("Please enter your Together.AI API key to proceed (used for answering).") # Updated message
     st.markdown("---")
 
 
@@ -64,29 +64,29 @@ if cohere_api_key:
 #         st.sidebar.error(f"Gemini Initialization Failed: {e}")
 #         genai_client = None
 
-# Initialize DeepSeek Client
-if deepseek_api_key:
+# Initialize Together.AI Client (for DeepSeek model)
+if together_api_key: # Renamed variable
     try:
-        deepseek_client = openai.OpenAI(
-            api_key=deepseek_api_key,
-            base_url="https://api.deepseek.com"
+        deepseek_client = openai.OpenAI( # Instance variable name can remain deepseek_client as it's primarily for that model via Together
+            api_key=together_api_key,  # Use the new variable for the key
+            base_url="https://api.together.xyz/v1"
         )
-        st.sidebar.success("DeepSeek Client Initialized!")
+        st.sidebar.success("Together.AI Client Initialized!") # Simplified message
     except Exception as e:
-        st.sidebar.error(f"DeepSeek Initialization Failed: {e}")
+        st.sidebar.error(f"Together.AI Client Initialization Failed: {e}")
         deepseek_client = None # Ensure client is None if init fails
 
 # Updated informational messages
-if not cohere_api_key and not deepseek_api_key:
-    st.info("Enter your Cohere and DeepSeek API keys in the sidebar to start.")
+if not cohere_api_key and not together_api_key: # Renamed variable
+    st.info("Enter your Cohere and Together.AI API keys in the sidebar to start.") # Simplified message
 elif not cohere_api_key:
     st.info("Cohere API key is required for embedding. Please enter it in the sidebar.")
-elif not deepseek_api_key:
-    st.info("DeepSeek API key is required for answering. Please enter it in the sidebar.")
+elif not together_api_key: # Renamed variable
+    st.info("Together.AI API key is required for answering. Please enter it in the sidebar.") # Simplified message
 elif not co: # Checks if Cohere client initialization failed
     st.warning("Cohere client not initialized. Check your Cohere API key or console for errors.")
-elif not deepseek_client: # Checks if DeepSeek client initialization failed
-    st.warning("DeepSeek client not initialized. Check your DeepSeek API key or console for errors.")
+elif not deepseek_client: # Checks if Together.AI client initialization failed
+    st.warning("Together.AI Client not initialized. Check your API key or console for errors.") # Simplified message
 
 
 # Information about the models
@@ -103,9 +103,9 @@ with st.expander("ℹ️ About the models used"):
     
     The model processes images without requiring complex OCR pre-processing and maintains the connection between visual elements and text.
     
-    ### DeepSeek Vision Model
+    ### DeepSeek Vision Model (via Together.AI)
     
-    DeepSeek Vision is a powerful large language model capable of understanding and processing both text and image inputs to generate relevant textual responses.
+    The "deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free" model, accessed via the Together.AI platform, is a powerful large language model capable of understanding and processing both text and image inputs to generate relevant textual responses.
     It's utilized in this application for the question-answering component based on the retrieved visual context.
     """)
 
@@ -382,8 +382,8 @@ def search(question: str, co_client: cohere.Client, embeddings: np.ndarray, imag
 # Answer function
 def answer(question: str, img_path: str, deepseek_client_instance: openai.OpenAI) -> str:
     """Answers the question based on the provided image using DeepSeek's vision model."""
-    if not deepseek_client_instance:
-        return "DeepSeek client not initialized. Please check API key and initialization."
+    if not deepseek_client_instance: # This instance is the Together.AI client
+        return "Together.AI client not initialized. Please check API key and initialization." # Simplified message
     if not img_path or not os.path.exists(img_path):
         return f"Image path not provided or image does not exist at {img_path}."
 
@@ -393,12 +393,12 @@ def answer(question: str, img_path: str, deepseek_client_instance: openai.OpenAI
         prompt_text = (
             f"Answer the question based on the following image. "
             f"Be as elaborate as possible giving extra relevant information. "
-            # "Don't use markdown formatting in the response. " # DeepSeek might handle markdown well, let's test without this restriction first
+            # "Don't use markdown formatting in the response. " # Model might handle markdown well
             f"Please provide enough context for your answer. Question: {question}"
         )
 
-        response = deepseek_client_instance.chat.completions.create(
-            model="deepseek-vision", # Assumed model name, verify if different
+        response = deepseek_client_instance.chat.completions.create( # Call is to Together.AI endpoint
+            model="deepseek-ai/DeepSeek-R1-Distill-Llama-70B-free", # Ensure this is the exact model name
             messages=[
                 {
                     "role": "user",
@@ -411,15 +411,15 @@ def answer(question: str, img_path: str, deepseek_client_instance: openai.OpenAI
                     ],
                 }
             ],
-            max_tokens=500  # As requested
+            max_tokens=500
         )
 
         llm_answer = response.choices[0].message.content
-        print("DeepSeek LLM Answer:", llm_answer) # Keep for debugging
+        print("Together.AI (DeepSeek) LLM Answer:", llm_answer) # Updated print statement
         return llm_answer
     except Exception as e:
-        st.error(f"Error during DeepSeek answer generation: {e}")
-        return f"Failed to generate answer using DeepSeek: {e}"
+        st.error(f"Error during Together.AI (DeepSeek) answer generation: {e}") # Updated error message
+        return f"Failed to generate answer using Together.AI (DeepSeek): {e}" # Updated error message
 
 # --- Main UI Setup ---
 st.subheader("📊 Load Sample Images")
@@ -559,7 +559,7 @@ question = st.text_input("Ask a question about the loaded images:",
 run_button = st.button("Run Vision RAG", key="main_run_button",
                       disabled=not (
                           cohere_api_key and co and  # Cohere for embeddings
-                          deepseek_api_key and deepseek_client and # DeepSeek for answering
+                          together_api_key and deepseek_client and # Renamed variable, Together.AI for answering
                           question and
                           st.session_state.image_paths and
                           st.session_state.doc_embeddings is not None and
@@ -602,8 +602,8 @@ if run_button:
                     answer_placeholder.text("") # Clear answer placeholder
     else:
         # This case should ideally be prevented by the disabled state of the button
-        st.error("Cannot run RAG. Check API clients (Cohere & DeepSeek) and ensure images are loaded with embeddings.") # Updated error message
+    st.error("Cannot run RAG. Check API clients (Cohere & Together.AI) and ensure images are loaded with embeddings.") # Updated error message
 
 # Footer
 st.markdown("---")
-st.caption("Vision RAG with Cohere Embed-4 | Built with Streamlit, Cohere Embed-4, and DeepSeek Vision") # Updated caption
+st.caption("Vision RAG with Cohere Embed-4 | Built with Streamlit, Cohere Embed-4, and DeepSeek Vision (via Together.AI)")

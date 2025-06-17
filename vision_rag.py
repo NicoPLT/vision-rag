@@ -602,7 +602,7 @@ if run_button:
                     answer_placeholder.text("") # Clear answer placeholder
     else:
         # This case should ideally be prevented by the disabled state of the button
-    st.error("Cannot run RAG. Check API clients (Cohere & Together.AI) and ensure images are loaded with embeddings.") # Updated error message
+        st.error("Cannot run RAG. Check API clients (Cohere & Together.AI) and ensure images are loaded with embeddings.") # Correctly indented
 
 # Footer
 st.markdown("---")
